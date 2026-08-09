@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ....utils.radar_geometry import (
+from ...utils.radar_geometry import (
     compute_line_of_sight_unit_vector,
     compute_tangential_direction,
     decompose_radial_velocity,

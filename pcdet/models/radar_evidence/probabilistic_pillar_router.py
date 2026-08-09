@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ....utils.covariance_2d import mahalanobis_distance
+from ...utils.covariance_2d import mahalanobis_distance
 
 
 class ProbabilisticPillarRouter(nn.Module):

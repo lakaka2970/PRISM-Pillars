@@ -11,7 +11,7 @@ receive lower similarity scores for distant current pillars.
 import torch
 import torch.nn as nn
 
-from ....utils.covariance_2d import pairwise_mahalanobis
+from ...utils.covariance_2d import pairwise_mahalanobis
 
 
 class MahalanobisBias(nn.Module):
