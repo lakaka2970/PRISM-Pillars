@@ -138,12 +138,16 @@ def main():
     # load checkpoint if it is possible
     start_epoch = it = 0
     last_epoch = -1
+    scaler_state = None
     if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist, logger=logger)
 
     if args.ckpt is not None:
         it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist, optimizer=optimizer, logger=logger)
         last_epoch = start_epoch + 1
+        # Load AMP scaler state if present
+        checkpoint = torch.load(args.ckpt, map_location='cpu', weights_only=False)
+        scaler_state = checkpoint.get('scaler_state', None)
     else:
         ckpt_list = glob.glob(str(ckpt_dir / '*checkpoint_epoch_*.pth'))
         if len(ckpt_list) > 0:
@@ -152,6 +156,8 @@ def main():
                 ckpt_list[-1], to_cpu=dist, optimizer=optimizer, logger=logger
             )
             last_epoch = start_epoch + 1
+            checkpoint = torch.load(ckpt_list[-1], map_location='cpu', weights_only=False)
+            scaler_state = checkpoint.get('scaler_state', None)
 
     model.train()  # before wrap to DistributedDataParallel to support fixed some parameters
     if dist_train:
@@ -231,7 +237,8 @@ def main():
         eval_output_dir=eval_output_dir,
         eval_interval=eval_interval,
         early_stop_cfg=early_stop_cfg,
-        dist_test=dist_train
+        dist_test=dist_train,
+        scaler_state=scaler_state
     )
 
     logger.info('**********************End training %s/%s(%s)**********************\n\n\n'

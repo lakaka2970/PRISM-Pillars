@@ -28,10 +28,12 @@ def _step_scheduler(scheduler, cur_iter):
 
 
 def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
-                    rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False, use_wandb=False):
+                    rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False,
+                    use_wandb=False, scaler=None):
     if total_it_each_epoch == len(train_loader):
         dataloader_iter = iter(train_loader)
     scheduler_is_torch = _is_torch_scheduler(lr_scheduler) if lr_scheduler is not None else False
+    use_amp = scaler is not None
 
     if rank == 0:
         pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar, desc='train', dynamic_ncols=True)
@@ -58,11 +60,20 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         model.train()
         optimizer.zero_grad()
 
-        loss, tb_dict, disp_dict = model_func(model, batch)
+        if use_amp:
+            with torch.cuda.amp.autocast():
+                loss, tb_dict, disp_dict = model_func(model, batch)
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss, tb_dict, disp_dict = model_func(model, batch)
+            loss.backward()
+            clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
+            optimizer.step()
 
-        loss.backward()
-        clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
-        optimizer.step()
         if scheduler_is_torch:
             _step_scheduler(lr_scheduler, accumulated_iter)
 
@@ -97,8 +108,21 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 lr_warmup_scheduler=None, ckpt_save_interval=1, max_ckpt_save_num=50,
                 merge_all_iters_to_one_epoch=False, use_wandb=False,
                 eval_loader=None, eval_model=None, eval_func=None, eval_output_dir=None,
-                eval_interval=1, early_stop_cfg=None, dist_test=False):
+                eval_interval=1, early_stop_cfg=None, dist_test=False, scaler_state=None):
     accumulated_iter = start_iter
+
+    # Initialize AMP GradScaler
+    amp_cfg = getattr(optim_cfg, 'AMP', None)
+    if amp_cfg is None and hasattr(optim_cfg, 'get'):
+        amp_cfg = optim_cfg.get('AMP', None)
+    use_amp = amp_cfg is not None and amp_cfg.get('ENABLED', False)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp) if use_amp else None
+    if use_amp and rank == 0:
+        print('AMP mixed precision training ENABLED')
+    if scaler is not None and scaler_state is not None:
+        scaler.load_state_dict(scaler_state)
+        if rank == 0:
+            print('AMP scaler state restored from checkpoint')
 
     if rank == 0:
         Path(ckpt_save_dir).mkdir(parents=True, exist_ok=True)
@@ -193,7 +217,8 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 leave_pbar=(cur_epoch + 1 == total_epochs),
                 total_it_each_epoch=total_it_each_epoch,
                 dataloader_iter=dataloader_iter,
-                use_wandb=use_wandb
+                use_wandb=use_wandb,
+                scaler=scaler
             )
 
             # save trained model
@@ -209,7 +234,7 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
 
                 ckpt_name = ckpt_save_dir / ('checkpoint_epoch_%d' % trained_epoch)
                 save_checkpoint(
-                    checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
+                    checkpoint_state(model, optimizer, trained_epoch, accumulated_iter, scaler=scaler), filename=ckpt_name,
                 )
 
             if eval_loader is None or eval_func is None or eval_output_dir is None:
@@ -255,7 +280,7 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 if _get_cfg(early_stop_cfg, 'SAVE_BEST', True):
                     ckpt_name = ckpt_save_dir / 'checkpoint_best'
                     save_checkpoint(
-                        checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
+                        checkpoint_state(model, optimizer, trained_epoch, accumulated_iter, scaler=scaler), filename=ckpt_name,
                     )
             else:
                 bad_epochs += 1
@@ -275,7 +300,7 @@ def model_state_to_cpu(model_state):
     return model_state_cpu
 
 
-def checkpoint_state(model=None, optimizer=None, epoch=None, it=None):
+def checkpoint_state(model=None, optimizer=None, epoch=None, it=None, scaler=None):
     optim_state = optimizer.state_dict() if optimizer is not None else None
     if model is not None:
         if isinstance(model, torch.nn.parallel.DistributedDataParallel):
@@ -291,7 +316,10 @@ def checkpoint_state(model=None, optimizer=None, epoch=None, it=None):
     except:
         version = 'none'
 
-    return {'epoch': epoch, 'it': it, 'model_state': model_state, 'optimizer_state': optim_state, 'version': version}
+    ckpt = {'epoch': epoch, 'it': it, 'model_state': model_state, 'optimizer_state': optim_state, 'version': version}
+    if scaler is not None:
+        ckpt['scaler_state'] = scaler.state_dict()
+    return ckpt
 
 
 def save_checkpoint(state, filename='checkpoint'):

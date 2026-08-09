@@ -208,6 +208,10 @@ OPTIMIZATION:
     LR_CLIP: 0.0000001
     GRAD_NORM_CLIP: 10
 
+    # --- AMP (Automatic Mixed Precision) for memory-efficient training ---
+    AMP:
+        ENABLED: true
+
     # --- Phased Training Protocol (final_upgrade.md §12) ---
     PHASED_TRAINING:
         ENABLED: true
