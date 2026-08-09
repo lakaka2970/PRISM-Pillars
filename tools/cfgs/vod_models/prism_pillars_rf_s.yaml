@@ -32,6 +32,22 @@ DATA_CONFIG:
             - NAME: random_world_scaling
               WORLD_SCALE_RANGE: [0.95, 1.05]
 
+    # --- Radar Process Augmentation (Module D, cross-domain robustness) ---
+    RADAR_AUG:
+        ENABLED: true
+        RCS_SCALE: [0.7, 1.3]
+        RCS_SHIFT: [-1.0, 1.0]
+        RANGE_DROPOUT:
+            ENABLED: true
+            BASE_PROB: 0.05
+            FAR_GAIN: 0.25
+        ANGLE_NOISE_STD: 0.003
+        DOPPLER_BIAS_STD: 0.20
+        DOPPLER_SCALE: [0.9, 1.1]
+        EGO_COMP_NOISE_STD: 0.15
+        SWEEP_DROPOUT_PROB: 0.2
+        GHOST_PROB: 0.05
+
 MODEL:
     NAME: PRISMPillarsRF
 
@@ -191,3 +207,10 @@ OPTIMIZATION:
     LR_DECAY: 0.1
     LR_CLIP: 0.0000001
     GRAD_NORM_CLIP: 10
+
+    # --- Phased Training Protocol (final_upgrade.md §12) ---
+    PHASED_TRAINING:
+        ENABLED: true
+        PHASE0_EPOCHS: 5           # q=1, LAMBDA_REL=0, sigma fixed
+        PHASE1_EPOCHS: [6, 15]     # gradual LAMBDA_REL warm-up 0→0.20
+        PHASE2_START_EPOCH: 16     # learned sigma enabled, full modules

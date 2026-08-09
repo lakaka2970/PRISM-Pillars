@@ -31,6 +31,63 @@ class Detector3DTemplate(nn.Module):
     def update_global_step(self):
         self.global_step += 1
 
+    def update_phased_training_params(self, cur_epoch, total_epochs):
+        """
+        Update phased training parameters based on current epoch.
+
+        Implements the protocol from final_upgrade.md §12:
+          - Phase 0 (1-5):  q=1, lambda_rel=0, sigma fixed
+          - Phase 1 (6-15): gradual lambda_rel warm-up 0→0.20, sigma fixed
+          - Phase 2 (16+):  learned sigma enabled, full modules
+
+        Called at the beginning of each epoch from the training loop.
+        """
+        optim_cfg = getattr(self.model_cfg, 'OPTIMIZATION', None)
+        if optim_cfg is None:
+            return
+
+        phased_cfg = None
+        if hasattr(optim_cfg, 'PHASED_TRAINING'):
+            phased_cfg = optim_cfg.PHASED_TRAINING
+        elif isinstance(optim_cfg, dict):
+            phased_cfg = optim_cfg.get('PHASED_TRAINING', None)
+
+        if phased_cfg is None or not phased_cfg.get('ENABLED', False):
+            # Phased training disabled — use full config values
+            self._phased_lambda_rel = self.lambda_rel if hasattr(self, 'lambda_rel') else None
+            self._phased_use_learned_sigma = True
+            self._phased_freeze_q = False
+            return
+
+        epoch = cur_epoch + 1  # cur_epoch is 0-indexed
+
+        phase0_end = phased_cfg.get('PHASE0_EPOCHS', 5)
+        phase1_range = phased_cfg.get('PHASE1_EPOCHS', [6, 15])
+        phase2_start = phased_cfg.get('PHASE2_START_EPOCH', 16)
+
+        full_lambda_rel = getattr(self.model_cfg, 'LOSS', None)
+        if full_lambda_rel is not None:
+            full_lambda_rel = getattr(full_lambda_rel, 'LAMBDA_REL', 0.20)
+        else:
+            full_lambda_rel = 0.20
+
+        if epoch <= phase0_end:
+            # Phase 0: q=1 warm-up
+            self._phased_lambda_rel = 0.0
+            self._phased_use_learned_sigma = False
+            self._phased_freeze_q = True
+        elif phase1_range[0] <= epoch <= phase1_range[1]:
+            # Phase 1: gradual lambda_rel warm-up
+            progress = (epoch - phase1_range[0]) / (phase1_range[1] - phase1_range[0])
+            self._phased_lambda_rel = progress * full_lambda_rel
+            self._phased_use_learned_sigma = False
+            self._phased_freeze_q = False
+        else:
+            # Phase 2: full training
+            self._phased_lambda_rel = full_lambda_rel
+            self._phased_use_learned_sigma = True
+            self._phased_freeze_q = False
+
     def build_networks(self):
         model_info_dict = {
             'module_list': [],

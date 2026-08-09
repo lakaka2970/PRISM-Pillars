@@ -154,6 +154,41 @@ class PRISMPillarsRF(Detector3DTemplate):
         # If they differ, a projection layer will be created lazily on first forward.
         self._history_feat_proj = None  # Created lazily if dims differ
 
+        # Phased training state
+        self._phased_lambda_rel = self.lambda_rel
+        self._phased_use_learned_sigma = self.model_cfg.get('DOPPLER_TUBE', {}).get('LEARNABLE', True)
+        self._phased_freeze_q = False
+
+    def update_phased_training_params(self, cur_epoch, total_epochs):
+        """
+        Override parent to also update PRISM-specific module states.
+
+        Protocol (final_upgrade.md §12):
+          - Phase 0 (1-5):   q=1, lambda_rel=0, sigma fixed
+          - Phase 1 (6-15):  gradual lambda_rel 0→0.20, q learned, sigma fixed
+          - Phase 2 (16+):   lambda_rel=0.20, q learned, sigma learned
+        """
+        super().update_phased_training_params(cur_epoch, total_epochs)
+
+        # Apply to PRISM modules (nn.ModuleDict uses dict-style access)
+        try:
+            prob_router = self.prism_modules['prob_router']
+        except (KeyError, AttributeError):
+            prob_router = None
+        try:
+            doppler_tube = self.prism_modules['doppler_tube']
+        except (KeyError, AttributeError):
+            doppler_tube = None
+
+        if self._phased_freeze_q and prob_router is not None:
+            prob_router.use_reliability = False  # q=1 for all points
+
+        if doppler_tube is not None:
+            doppler_tube.learnable = self._phased_use_learned_sigma
+
+        # Update lambda_rel
+        self.lambda_rel = self._phased_lambda_rel
+
     def build_neck(self, model_info_dict):
         """Build Lite-MDFEN neck (between backbone_2d and dense_head)."""
         if self.model_cfg.get('LITE_MDFEN', {}).get('ENABLED', True):

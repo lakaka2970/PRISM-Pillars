@@ -174,6 +174,12 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
             if train_sampler is not None:
                 train_sampler.set_epoch(cur_epoch)
 
+            # Update phased training parameters (PRISM protocol)
+            if hasattr(model, 'module') and hasattr(model.module, 'update_phased_training_params'):
+                model.module.update_phased_training_params(cur_epoch, total_epochs)
+            elif hasattr(model, 'update_phased_training_params'):
+                model.update_phased_training_params(cur_epoch, total_epochs)
+
             # train one epoch
             if lr_warmup_scheduler is not None and cur_epoch < optim_cfg.WARMUP_EPOCH:
                 cur_scheduler = lr_warmup_scheduler

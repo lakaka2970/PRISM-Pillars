@@ -6,6 +6,7 @@ import torch.utils.data as torch_data
 
 from ..utils import common_utils
 from .augmentor.data_augmentor import DataAugmentor
+from .augmentor.radar_process_augmentor import build_radar_augmentor
 from .processor.data_processor import DataProcessor
 from .processor.point_feature_encoder import PointFeatureEncoder
 
@@ -30,6 +31,7 @@ class DatasetTemplate(torch_data.Dataset):
         self.data_augmentor = DataAugmentor(
             self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.class_names, logger=self.logger
         ) if self.training else None
+        self.radar_augmentor = build_radar_augmentor(self.dataset_cfg) if self.training else None
         self.data_processor = DataProcessor(
             self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range, training=self.training
         )
@@ -116,6 +118,13 @@ class DatasetTemplate(torch_data.Dataset):
         """
         if self.training:
             assert 'gt_boxes' in data_dict, 'gt_boxes should be provided for training'
+
+            # --- Radar process augmentation (physics-aware, before geometric augs) ---
+            if self.radar_augmentor is not None:
+                data_dict['points'] = self.radar_augmentor.forward(data_dict['points'])
+                # If points were dropped, also filter history_points if present
+                # (history points are separately augmented by the model's temporal modules)
+
             gt_boxes_mask = np.array([n in self.class_names for n in data_dict['gt_names']], dtype=np.bool_)
 
             data_dict = self.data_augmentor.forward(

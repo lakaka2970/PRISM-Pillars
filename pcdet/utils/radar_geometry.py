@@ -103,14 +103,64 @@ def compute_range(x, y):
     return torch.sqrt(x * x + y * y + _EPS).unsqueeze(-1)
 
 
-def compute_local_point_stats(points_xy, features, k=8):
+def _chunked_cdist_topk(points_xy, k, chunk_size=2048):
+    """
+    Memory-efficient chunked pairwise distance + top-k selection.
+
+    Replaces torch.cdist(points_xy, points_xy) + topk with a chunked
+    computation to avoid O(N²) memory explosion at large batch sizes.
+
+    Args:
+        points_xy: (N, 2) float tensor, BEV coordinates.
+        k: int, number of neighbors to find (excluding self).
+        chunk_size: int, query chunk size for memory control.
+
+    Returns:
+        topk_dist: (N, k) float tensor, distances to k nearest neighbors.
+        topk_idx: (N, k) long tensor, indices of k nearest neighbors.
+    """
+    N = points_xy.shape[0]
+    device = points_xy.device
+    dtype = points_xy.dtype
+
+    k_search = min(k + 1, N)  # +1 to account for self, removed afterward
+
+    # Initialize best-so-far accumulators
+    best_dists = torch.full((N, k_search), float('inf'), device=device, dtype=dtype)
+    best_idxs = torch.zeros(N, k_search, device=device, dtype=torch.long)
+
+    for start in range(0, N, chunk_size):
+        end = min(start + chunk_size, N)
+        chunk = points_xy[start:end]  # (C, 2)
+
+        # (C, N) distance matrix — memory O(C·N) instead of O(N²)
+        dist_chunk = torch.cdist(chunk, points_xy, p=2)
+
+        # Top-k nearest for each query point in this chunk
+        topk_dist, topk_idx = torch.topk(dist_chunk, k=k_search, dim=-1, largest=False)
+
+        best_dists[start:end] = topk_dist
+        best_idxs[start:end] = topk_idx
+
+    # Remove self (first neighbor is always the point itself for Euclidean distance)
+    topk_dist = best_dists[:, 1:]  # (N, k)
+    topk_idx = best_idxs[:, 1:]    # (N, k)
+
+    return topk_dist, topk_idx
+
+
+def compute_local_point_stats(points_xy, features, k=8, chunk_size=2048):
     """
     Compute local statistics for each point using k-nearest neighbors.
+
+    Uses chunked cdist to avoid O(N²) memory allocation, enabling larger
+    batch sizes without OOM.
 
     Args:
         points_xy: (N, 2) float tensor, BEV coordinates [x, y].
         features: (N, D) float tensor, point features (RCS, Doppler, etc.).
         k: Number of neighbors. Defaults to 8.
+        chunk_size: Query chunk size for chunked cdist. Defaults to 2048.
 
     Returns:
         local_density: (N, 1) float tensor, mean distance to k neighbors.
@@ -125,27 +175,14 @@ def compute_local_point_stats(points_xy, features, k=8):
             torch.zeros(N, 1, device=points_xy.device),
         )
 
-    # Compute pairwise distances
-    dist_matrix = torch.cdist(points_xy, points_xy, p=2)  # (N, N)
-
-    # Find k-nearest neighbors (excluding self)
-    k_actual = min(k + 1, N)
-    topk_dist, topk_idx = torch.topk(dist_matrix, k=k_actual, dim=-1, largest=False)
-
-    # Remove self (first neighbor is the point itself)
-    if k_actual > 1:
-        topk_dist = topk_dist[:, 1:]  # distances to k neighbors (excluding self)
-        topk_idx = topk_idx[:, 1:]    # indices of k neighbors
-    else:
-        topk_dist = topk_dist
-        topk_idx = topk_idx[:, 1:]
+    # Memory-efficient chunked kNN (avoids O(N²) cdist memory)
+    topk_dist, topk_idx = _chunked_cdist_topk(points_xy, k, chunk_size=chunk_size)
 
     # Local density: mean distance to k neighbors
     local_density = topk_dist.float().mean(dim=-1, keepdim=True)
 
     # Local RCS mean (assuming RCS is feature dim 0)
     if features.shape[1] > 0:
-        # Gather neighbor features
         neighbor_rcs = features[topk_idx, 0]  # (N, k)
         local_rcs_mean = neighbor_rcs.float().mean(dim=-1, keepdim=True)
     else:
