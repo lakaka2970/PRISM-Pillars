@@ -114,7 +114,7 @@ def main():
     model = build_network(model_cfg=cfg.MODEL, num_class=len(cfg.CLASS_NAMES), dataset=dataset)
     model.to(device)
 
-    checkpoint = torch.load(args.ckpt, map_location=device)
+    checkpoint = torch.load(args.ckpt, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint.get('model_state', checkpoint))
     model.eval()
 

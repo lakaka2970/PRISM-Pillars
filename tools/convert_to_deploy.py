@@ -56,7 +56,7 @@ def load_model(cfg_file, ckpt_path, device='cuda'):
     model.to(device)
 
     # Load checkpoint
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     if 'model_state' in checkpoint:
         model.load_state_dict(checkpoint['model_state'])
     else:
