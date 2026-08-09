@@ -8,6 +8,7 @@ from skimage import io
 from ...ops.roiaware_pool3d import roiaware_pool3d_utils
 from ...utils import box_utils, calibration_kitti, common_utils, object3d_kitti
 from ..dataset import DatasetTemplate
+from .sequence_loader import RadarSequenceLoader
 
 
 class VodDataset(DatasetTemplate):
@@ -52,6 +53,20 @@ class VodDataset(DatasetTemplate):
             self.feature_std = None
 
         self.class_name_mapping = self.dataset_cfg.get('CLASS_MAPPINGS', {})
+
+        # Sequence loader for multi-frame temporal training (PRISM-Pillars-RF)
+        self.num_sweeps = self.dataset_cfg.get('NUM_SWEEPS', 1)
+        self.history_only = self.dataset_cfg.get('HISTORY_ONLY', False)
+        if self.num_sweeps > 1:
+            self.sequence_loader = RadarSequenceLoader(
+                num_sweeps=self.num_sweeps,
+                max_history_points=self.dataset_cfg.get(
+                    'PROBABILISTIC_ROUTING', {}
+                ).get('MAX_HISTORY_POINTS', None),
+                use_true_delta_t=self.dataset_cfg.get('USE_TRUE_DELTA_T', True),
+            )
+        else:
+            self.sequence_loader = None
 
     def include_vod_data(self, mode):
         if self.logger is not None:
@@ -378,7 +393,7 @@ class VodDataset(DatasetTemplate):
         if 'annos' not in self.vod_infos[0].keys():
             return None, {}
 
-        from ..kitti.kitti_object_eval_python import eval as kitti_eval
+        from ..kitti.kitti_object_eval_python import eval1 as kitti_eval
 
         eval_det_annos = copy.deepcopy(det_annos)
         eval_gt_annos = [copy.deepcopy(info['annos']) for info in self.vod_infos]
@@ -407,6 +422,16 @@ class VodDataset(DatasetTemplate):
             'frame_id': sample_idx,
             'calib': calib,
         }
+
+        # Load historical frames for temporal training (PRISM-Pillars-RF)
+        if self.sequence_loader is not None:
+            history_dict = self.sequence_loader.load_history(self, index)
+            if self.history_only and history_dict['history_points'].shape[0] == 0:
+                # Resample if history is unavailable for history-only training
+                new_index = np.random.randint(self.__len__())
+                return self.__getitem__(new_index)
+            input_dict['history_points'] = history_dict['history_points']
+            input_dict['history_delta_t'] = history_dict['history_delta_t']
 
         if 'annos' in info:
             annos = info['annos']

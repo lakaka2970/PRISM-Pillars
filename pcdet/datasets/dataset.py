@@ -170,6 +170,28 @@ class DatasetTemplate(torch_data.Dataset):
                     for k in range(batch_size):
                         batch_gt_boxes3d[k, :val[k].__len__(), :] = val[k]
                     ret[key] = batch_gt_boxes3d
+                elif key in ['history_points', 'history_delta_t', 'history_sweep_idx',
+                             'history_pose_to_current']:
+                    # Variable-sized history arrays: concatenate (not stack)
+                    # history_points: list of (N_i, D) → concat to (sum N_i, D)
+                    # history_delta_t: list of (N_i,) → concat to (sum N_i,)
+                    # history_sweep_idx: list of (N_i,) → concat to (sum N_i,)
+                    # history_pose_to_current: list of (S, 4, 4) → stack to (B, S, 4, 4)
+                    if key == 'history_pose_to_current':
+                        ret[key] = np.stack(val, axis=0)
+                    elif key == 'history_points':
+                        # Pad with batch index then concatenate (like 'points')
+                        coors = []
+                        for i, coor in enumerate(val):
+                            if coor.shape[0] > 0:
+                                coor_pad = np.pad(coor, ((0, 0), (1, 0)), mode='constant', constant_values=i)
+                                coors.append(coor_pad)
+                            else:
+                                coors.append(np.zeros((0, val[0].shape[1] + 1), dtype=val[0].dtype))
+                        ret[key] = np.concatenate(coors, axis=0) if coors else np.zeros((0, val[0].shape[1] + 1), dtype=np.float32)
+                    else:
+                        # history_delta_t, history_sweep_idx: just concatenate 1D arrays
+                        ret[key] = np.concatenate(val, axis=0) if val else np.zeros(0, dtype=np.float32)
                 else:
                     ret[key] = np.stack(val, axis=0)
             except:

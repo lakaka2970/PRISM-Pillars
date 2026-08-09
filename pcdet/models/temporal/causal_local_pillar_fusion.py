@@ -281,15 +281,16 @@ class CausalLocalPillarFusion(nn.Module):
 
         # Compute Mahalanobis bias
         if self.use_mahalanobis_bias and covariance is not None:
-            from ....utils.covariance_2d import pairwise_mahalanobis
+            from ...utils.covariance_2d import pairwise_mahalanobis
             # Convert pillar grid coords to approximate world coordinates.
             # Grid coords are integers [y_idx, x_idx]; multiply by voxel size
             # to get meter-scale coordinates matching the covariance units.
             # Default voxel size fallback: 0.16m (standard RadarPillars config).
             grid_to_world = self.model_cfg.get('VOXEL_SIZE', [0.16, 0.16]) if hasattr(self, 'model_cfg') else [0.16, 0.16]
             vy, vx = grid_to_world[0], grid_to_world[1]
-            c_i = current_coords[:, 1:].float() * torch.tensor([vy, vx], device=device, dtype=dtype)  # (Q, 2)
-            c_j = history_coords[:, 1:].float() * torch.tensor([vy, vx], device=device, dtype=dtype)   # (K, 2)
+            # voxel_coords format: [batch_idx, z, y, x]; take last 2 for BEV (y, x)
+            c_i = current_coords[:, -2:].float() * torch.tensor([vy, vx], device=device, dtype=dtype)  # (Q, 2)
+            c_j = history_coords[:, -2:].float() * torch.tensor([vy, vx], device=device, dtype=dtype)   # (K, 2)
             d2 = pairwise_mahalanobis(c_i, c_j, covariance, sigma_c=0.1)
             b_geo = -0.5 * d2  # (Q, K)
         else:

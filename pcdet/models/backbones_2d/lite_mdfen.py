@@ -103,13 +103,18 @@ class LiteMDFEN(nn.Module):
         self.b2_fusion = RepDWCBlock(C * 2, C, stride=1, deploy_mode=self.deploy_mode)
 
         # === Final output ===
-        # Concat[T1, Up(B2), Up(F3)] -> 1x1 Conv -> output_channels
+        # Concat[T1, Up(B2), Up(Up(F3))] -> 1x1 Conv -> output_channels
+        # B2 at stride 2: Up → stride 1 (2×)
+        # F3 at stride 4: Up → stride 2 → stride 1 (4×)
         self.out_b2_up = nn.Sequential(
             nn.ConvTranspose2d(C, C, kernel_size=2, stride=2, bias=False),
             nn.BatchNorm2d(C),
             nn.SiLU(),
         )
         self.out_f3_up = nn.Sequential(
+            nn.ConvTranspose2d(C, C, kernel_size=2, stride=2, bias=False),
+            nn.BatchNorm2d(C),
+            nn.SiLU(),
             nn.ConvTranspose2d(C, C, kernel_size=2, stride=2, bias=False),
             nn.BatchNorm2d(C),
             nn.SiLU(),

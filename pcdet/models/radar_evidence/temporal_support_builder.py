@@ -9,7 +9,7 @@ with detached covariance to prevent co-adaptation with the reliability estimator
 import torch
 import torch.nn as nn
 
-from ....utils.covariance_2d import pairwise_mahalanobis
+from ...utils.covariance_2d import pairwise_mahalanobis
 
 
 class TemporalSupportBuilder(nn.Module):
@@ -88,8 +88,10 @@ class TemporalSupportBuilder(nn.Module):
             Sigma_used = self._build_fixed_covariance(N_h, u_vectors, device)
 
         # Compute pairwise Mahalanobis distance
-        d2 = pairwise_mahalanobis(mu, current_points_xy, Sigma_used, sigma_c=self.sigma_0)
-        # d2: (N_h, N_c)
+        # pairwise_mahalanobis expects Sigma_j per KEY point.
+        # We have Sigma per QUERY (mu) point, so swap arguments and transpose.
+        d2 = pairwise_mahalanobis(current_points_xy, mu, Sigma_used, sigma_c=self.sigma_0)
+        d2 = d2.T  # (N_c, N_h) → (N_h, N_c)
 
         # Support score: exp(-0.5 * min_j d^2(i, j))
         min_d2, _ = d2.min(dim=-1)  # (N_h,)
@@ -109,8 +111,8 @@ class TemporalSupportBuilder(nn.Module):
         Returns:
             Sigma: (N, 2, 2) float tensor.
         """
-        from ....utils.covariance_2d import build_anisotropic_covariance
-        from ....utils.radar_geometry import compute_tangential_direction
+        from ...utils.covariance_2d import build_anisotropic_covariance
+        from ...utils.radar_geometry import compute_tangential_direction
 
         s_r = torch.full((N,), self.fixed_sigma_r, device=device)
         s_t = torch.full((N,), self.fixed_sigma_t, device=device)

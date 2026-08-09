@@ -201,24 +201,49 @@ class PRISMPillarsRF(Detector3DTemplate):
             if not isinstance(history_points_tensor, torch.Tensor):
                 history_points_tensor = torch.from_numpy(history_points).float().to(current_pillars.device)
 
+            # collate_batch now concatenates (with batch_idx prefix) instead of stacking.
+            # history_points: (sum N_i, D+1) with batch_idx at column 0.
+            # history_points: (B, N_i, D) only if from old collate_batch (legacy path).
+            if history_points_tensor.dim() == 3:
+                # Legacy: stacked format (B, N_i, D) → take first sample
+                history_points_tensor = history_points_tensor[0]
+                # Extract original point data (no batch_idx prefix)
+                history_points_raw = history_points_tensor
+                batch_idx = torch.zeros(history_points_tensor.shape[0], dtype=torch.long, device=history_points_tensor.device)
+            elif history_points_tensor.dim() == 2 and history_points_tensor.shape[1] >= 8:
+                # New concatenated format: (sum N_i, 1+D_raw) with batch_idx at col 0
+                batch_idx = history_points_tensor[:, 0].long()
+                history_points_raw = history_points_tensor[:, 1:]  # Strip batch_idx
+            else:
+                # Unknown format, treat as raw points
+                history_points_raw = history_points_tensor
+                batch_idx = torch.zeros(history_points_tensor.shape[0], dtype=torch.long, device=history_points_tensor.device)
+
             delta_t = batch_dict.get('history_delta_t', None)
+            if delta_t is not None:
+                if not isinstance(delta_t, torch.Tensor):
+                    delta_t = torch.from_numpy(delta_t).float().to(current_pillars.device)
+                # Concatenated format: (sum N_i,) — no stripping needed.
+                # Legacy stacked format: (B, N_i) → strip first dim.
+                if delta_t.dim() == 2:
+                    delta_t = delta_t[0]
 
             # 2a. Point embedding (shared with current frame)
             if self.prism_modules['point_embedding'] is not None:
-                history_feat = self.prism_modules['point_embedding'](history_points_tensor, delta_t)
+                history_feat = self.prism_modules['point_embedding'](history_points_raw, delta_t)
             else:
                 # Use raw points as features (fallback)
-                history_feat = history_points_tensor[:, :10]  # Take first 10 dims
+                history_feat = history_points_raw[:, :10]  # Take first 10 dims
 
             # 2b. Doppler uncertainty tube
             if self.prism_modules['doppler_tube'] is not None:
                 mu, Sigma, s_r, s_t = self.prism_modules['doppler_tube'](
-                    history_points_tensor, delta_t=delta_t,
+                    history_points_raw, delta_t=delta_t,
                     history_point_features=history_feat,
                 )
             else:
                 # Fixed uncertainty fallback
-                mu = history_points_tensor[:, :2]  # Use raw x,y as mean
+                mu = history_points_raw[:, :2]  # Use raw x,y as mean
                 Sigma = None
                 s_r = s_t = None
 
@@ -247,8 +272,6 @@ class PRISMPillarsRF(Detector3DTemplate):
 
             # 2d. Probabilistic pillar routing
             if self.prism_modules['prob_router'] is not None:
-                batch_idx = history_points_tensor[:, 0].long() if history_points_tensor.shape[1] > 0 else \
-                    torch.zeros(history_points_tensor.shape[0], dtype=torch.long, device=history_points_tensor.device)
 
                 history_evidence = self.prism_modules['prob_router'](
                     point_features=history_feat,
