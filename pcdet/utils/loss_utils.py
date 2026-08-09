@@ -240,7 +240,9 @@ class FocalBCELoss(nn.Module):
         p = pred[mask]
         t = target[mask]
 
-        bce = F.binary_cross_entropy(p, t, reduction='none')
+        # BCE is numerically unsafe under autocast (FP16) — force FP32
+        with torch.cuda.amp.autocast(enabled=False):
+            bce = F.binary_cross_entropy(p.float(), t.float(), reduction='none')
         pt = torch.where(t > 0.5, p, 1.0 - p)
         alpha_t = torch.where(t > 0.5, self.alpha, 1.0 - self.alpha)
         focal_weight = alpha_t * (1.0 - pt) ** self.gamma

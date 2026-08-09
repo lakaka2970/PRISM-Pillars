@@ -126,8 +126,9 @@ class ReliabilityLoss(nn.Module):
         q_valid = q[mask].view(-1)
         t_valid = targets[mask].view(-1)
 
-        # Focal BCE
-        bce = F.binary_cross_entropy(q_valid, t_valid, reduction='none')
+        # Focal BCE — must run outside autocast (BCE is numerically unsafe in FP16)
+        with torch.cuda.amp.autocast(enabled=False):
+            bce = F.binary_cross_entropy(q_valid.float(), t_valid.float(), reduction='none')
 
         pt = torch.where(t_valid > 0.5, q_valid, 1.0 - q_valid)
         alpha_t = torch.where(t_valid > 0.5, self.alpha, 1.0 - self.alpha)
