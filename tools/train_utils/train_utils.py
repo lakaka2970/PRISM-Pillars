@@ -61,7 +61,10 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
         optimizer.zero_grad()
 
         if use_amp:
-            with torch.cuda.amp.autocast():
+            # Use bfloat16 for better numerical stability on Ada Lovelace (sm_89)
+            # BF16 has same dynamic range as FP32, avoiding NaN/overflow issues
+            amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            with torch.cuda.amp.autocast(dtype=amp_dtype):
                 loss, tb_dict, disp_dict = model_func(model, batch)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
