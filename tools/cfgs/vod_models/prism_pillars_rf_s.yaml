@@ -145,9 +145,9 @@ MODEL:
         DIR_LIMIT_OFFSET: 0.0
         NUM_DIR_BINS: 2
         ANCHOR_GENERATOR_CONFIG: [
-            {'class_name': 'Car', 'anchor_sizes': [[4.17, 1.84, 1.57]], 'anchor_rotations': [0, 1.57], 'anchor_bottom_heights': [-1.78], 'align_center': False, 'feature_map_stride': 2, 'matched_threshold': 0.6, 'unmatched_threshold': 0.45},
-            {'class_name': 'Pedestrian', 'anchor_sizes': [[0.65, 0.64, 1.65]], 'anchor_rotations': [0, 1.57], 'anchor_bottom_heights': [-0.6], 'align_center': False, 'feature_map_stride': 2, 'matched_threshold': 0.5, 'unmatched_threshold': 0.35},
-            {'class_name': 'Cyclist', 'anchor_sizes': [[1.94, 0.79, 1.75]], 'anchor_rotations': [0, 1.57], 'anchor_bottom_heights': [-0.78], 'align_center': False, 'feature_map_stride': 2, 'matched_threshold': 0.5, 'unmatched_threshold': 0.35}
+            {'class_name': 'Car', 'anchor_sizes': [[4.17, 1.84, 1.57]], 'anchor_rotations': [0, 1.57], 'anchor_bottom_heights': [-1.78], 'align_center': False, 'feature_map_stride': 1, 'matched_threshold': 0.6, 'unmatched_threshold': 0.45},
+            {'class_name': 'Pedestrian', 'anchor_sizes': [[0.65, 0.64, 1.65]], 'anchor_rotations': [0, 1.57], 'anchor_bottom_heights': [-0.6], 'align_center': False, 'feature_map_stride': 1, 'matched_threshold': 0.5, 'unmatched_threshold': 0.35},
+            {'class_name': 'Cyclist', 'anchor_sizes': [[1.94, 0.79, 1.75]], 'anchor_rotations': [0, 1.57], 'anchor_bottom_heights': [-0.78], 'align_center': False, 'feature_map_stride': 1, 'matched_threshold': 0.5, 'unmatched_threshold': 0.35}
         ]
         TARGET_ASSIGNER_CONFIG:
             NAME: AxisAlignedTargetAssigner
