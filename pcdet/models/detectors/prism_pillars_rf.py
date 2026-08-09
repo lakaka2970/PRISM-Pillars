@@ -31,7 +31,7 @@ from ..radar_evidence import (
 from ..temporal import CausalLocalPillarFusion
 from ..radar_evidence.doppler_uncertainty_tube import UncertaintyRegularizer
 from ..radar_evidence.temporal_reliability import ReliabilityLoss
-from ...utils.loss_utils import CrossAugmentationConsistencyLoss
+from ...utils.loss_utils import CrossAugmentationConsistencyLoss, apply_ghost_augmentation
 
 
 class PRISMPillarsRF(Detector3DTemplate):
@@ -159,14 +159,21 @@ class PRISMPillarsRF(Detector3DTemplate):
         self._phased_use_learned_sigma = self.model_cfg.get('DOPPLER_TUBE', {}).get('LEARNABLE', True)
         self._phased_freeze_q = False
 
+        # P4 grouped learning rates (converged_paper_plan.md §6.4)
+        self._phased_lr_multipliers = {}
+        self._register_phased_param_groups()
+
     def update_phased_training_params(self, cur_epoch, total_epochs):
         """
         Override parent to also update PRISM-specific module states.
 
-        Protocol (final_upgrade.md §12):
+        Protocol (converged_paper_plan.md §6.3-6.4):
           - Phase 0 (1-5):   q=1, lambda_rel=0, sigma fixed
           - Phase 1 (6-15):  gradual lambda_rel 0→0.20, q learned, sigma fixed
-          - Phase 2 (16+):   lambda_rel=0.20, q learned, sigma learned
+          - Phase 2a (16-20): learned sigma enabled, freeze non-sigma PRISM modules
+          - Phase 2b (21+):  full modules, differential LRs:
+                              backbone 0.2×, reliability 0.5×, sigma_mlp 1.0×,
+                              temporal 0.5×, head 1.0×
         """
         super().update_phased_training_params(cur_epoch, total_epochs)
 
@@ -179,6 +186,14 @@ class PRISMPillarsRF(Detector3DTemplate):
             doppler_tube = self.prism_modules['doppler_tube']
         except (KeyError, AttributeError):
             doppler_tube = None
+        try:
+            reliability = self.prism_modules['reliability']
+        except (KeyError, AttributeError):
+            reliability = None
+        try:
+            temporal_fusion = self.prism_modules['temporal_fusion']
+        except (KeyError, AttributeError):
+            temporal_fusion = None
 
         if self._phased_freeze_q and prob_router is not None:
             prob_router.use_reliability = False  # q=1 for all points
@@ -188,6 +203,159 @@ class PRISMPillarsRF(Detector3DTemplate):
 
         # Update lambda_rel
         self.lambda_rel = self._phased_lambda_rel
+
+        # --- P4 differential learning rates (converged_paper_plan.md §6.4) ---
+        epoch = cur_epoch + 1  # 1-indexed
+
+        # Read Phase 2 sub-phase boundaries from config or use defaults
+        optim_cfg = getattr(self.model_cfg, 'OPTIMIZATION', None)
+        phased_cfg = None
+        if optim_cfg is not None:
+            if hasattr(optim_cfg, 'PHASED_TRAINING'):
+                phased_cfg = optim_cfg.PHASED_TRAINING
+            elif isinstance(optim_cfg, dict):
+                phased_cfg = optim_cfg.get('PHASED_TRAINING', None)
+
+        if phased_cfg is not None and phased_cfg.get('ENABLED', False):
+            phase2_start = phased_cfg.get('PHASE2_START_EPOCH', 16)
+            phase2b_start = phased_cfg.get('PHASE2B_START_EPOCH', 21)
+            p4_enabled = phased_cfg.get('P4_GROUPED_LR', True)
+        else:
+            phase2_start = 16
+            phase2b_start = 21
+            p4_enabled = True
+
+        if not p4_enabled or not hasattr(self, '_phased_param_groups'):
+            # Reset all multipliers to 1.0
+            self._phased_lr_multipliers = {k: 1.0 for k in getattr(self, '_phased_param_groups', {})}
+            # Ensure all PRISM params are trainable
+            for module in [reliability, temporal_fusion, prob_router]:
+                if module is not None:
+                    for p in module.parameters():
+                        p.requires_grad = True
+            return
+
+        if epoch >= phase2_start:
+            if epoch < phase2b_start:
+                # Phase 2a: freeze STER/RAPR/CRLF, train only sigma MLP
+                for module in [reliability, temporal_fusion, prob_router]:
+                    if module is not None:
+                        for p in module.parameters():
+                            p.requires_grad = False
+                # Ensure sigma MLP is trainable
+                if doppler_tube is not None and hasattr(doppler_tube, 'mlp'):
+                    for p in doppler_tube.mlp.parameters():
+                        p.requires_grad = True
+                # All active groups at 1.0 (backbone already at base LR)
+                self._phased_lr_multipliers = {k: 1.0 for k in self._phased_param_groups}
+            else:
+                # Phase 2b: unfreeze all, apply differential LRs
+                for module in [reliability, temporal_fusion, prob_router]:
+                    if module is not None:
+                        for p in module.parameters():
+                            p.requires_grad = True
+                self._phased_lr_multipliers = {
+                    'backbone': 0.2,
+                    'reliability': 0.5,
+                    'sigma_mlp': 1.0,
+                    'temporal': 0.5,
+                    'head': 1.0,
+                }
+        else:
+            # Pre-Phase-2: all multipliers at 1.0
+            self._phased_lr_multipliers = {k: 1.0 for k in self._phased_param_groups}
+
+    def _register_phased_param_groups(self):
+        """
+        Register parameter groups for P4 differential learning rates
+        (converged_paper_plan.md §6.4).
+
+        Groups:
+            - backbone: VFE, 3D backbone, BEV scatter, RepDWC, Lite-MDFEN (lr_mult=0.2)
+            - reliability: STER estimator (lr_mult=0.5)
+            - sigma_mlp: DAUT learnable MLP (lr_mult=1.0)
+            - temporal: RAPR router + CRLF fusion (lr_mult=0.5)
+            - head: detection head (lr_mult=1.0)
+        """
+        self._phased_param_groups = {'backbone': [], 'reliability': [],
+                                      'sigma_mlp': [], 'temporal': [], 'head': []}
+
+        # --- Backbone: VFE + 3D backbone + BEV scatter + RepDWC + Lite-MDFEN ---
+        for name in ['vfe', 'backbone_3d', 'map_to_bev_module', 'backbone_2d']:
+            module = getattr(self, name, None)
+            if module is not None:
+                self._phased_param_groups['backbone'].extend(
+                    [p for p in module.parameters() if p.requires_grad])
+
+        # Lite-MDFEN neck
+        neck = getattr(self, 'neck', None)
+        if neck is not None:
+            self._phased_param_groups['backbone'].extend(
+                [p for p in neck.parameters() if p.requires_grad])
+
+        # --- Head ---
+        head = getattr(self, 'dense_head', None)
+        if head is not None:
+            self._phased_param_groups['head'].extend(
+                [p for p in head.parameters() if p.requires_grad])
+
+        # --- PRISM modules ---
+        try:
+            reliability = self.prism_modules['reliability']
+            if reliability is not None:
+                self._phased_param_groups['reliability'].extend(
+                    [p for p in reliability.parameters() if p.requires_grad])
+        except (KeyError, AttributeError):
+            pass
+
+        try:
+            doppler_tube = self.prism_modules['doppler_tube']
+            if doppler_tube is not None:
+                # MLP parameters go to sigma_mlp
+                if hasattr(doppler_tube, 'mlp'):
+                    self._phased_param_groups['sigma_mlp'].extend(
+                        [p for p in doppler_tube.mlp.parameters() if p.requires_grad])
+        except (KeyError, AttributeError):
+            pass
+
+        try:
+            prob_router = self.prism_modules['prob_router']
+            if prob_router is not None:
+                self._phased_param_groups['temporal'].extend(
+                    [p for p in prob_router.parameters() if p.requires_grad])
+        except (KeyError, AttributeError):
+            pass
+
+        try:
+            temporal_fusion = self.prism_modules['temporal_fusion']
+            if temporal_fusion is not None:
+                self._phased_param_groups['temporal'].extend(
+                    [p for p in temporal_fusion.parameters() if p.requires_grad])
+        except (KeyError, AttributeError):
+            pass
+
+        # Initialize all multipliers to 1.0 (no differential LR by default)
+        self._phased_lr_multipliers = {k: 1.0 for k in self._phased_param_groups}
+
+    def scale_phased_gradients(self):
+        """
+        Apply per-group LR multipliers by scaling gradients.
+        Called after scaler.unscale_() and before clip_grad_norm_().
+
+        When all multipliers are 1.0, this is a no-op.
+        """
+        if not self._phased_lr_multipliers:
+            return
+        all_one = all(v == 1.0 for v in self._phased_lr_multipliers.values())
+        if all_one:
+            return
+        for group_name, params in self._phased_param_groups.items():
+            mult = self._phased_lr_multipliers.get(group_name, 1.0)
+            if mult == 1.0:
+                continue
+            for p in params:
+                if p.grad is not None:
+                    p.grad.data.mul_(mult)
 
     def build_neck(self, model_info_dict):
         """Build Lite-MDFEN neck (between backbone_2d and dense_head)."""
@@ -294,9 +462,36 @@ class PRISMPillarsRF(Detector3DTemplate):
                         mu=mu, Sigma=Sigma, current_points_xy=current_xy,
                         u_vectors=None,
                     )
-                    # Store for loss computation
+
+                    # --- Ghost augmentation for reliability robustness ---
+                    # Inject synthetic ghost features to prevent reliability collapse.
+                    # Ghosts have no support in current frame → pseudo-label = 0.
+                    # Ghost q/support are ONLY for the reliability loss, NOT for routing.
+                    # (converged_paper_plan.md §5.3: BCE + ranking + ghost augmentation)
+                    ghost_cfg = cfg.get('RELIABILITY', {})
+                    ghost_prob = ghost_cfg.get('GHOST_AUG_PROB', 0.0)
+                    ghost_ratio = ghost_cfg.get('GHOST_RATIO', 0.05)
+                    if ghost_prob > 0 and torch.rand(1).item() < ghost_prob:
+                        N = history_feat.shape[0]
+                        N_ghost = max(1, int(N * ghost_ratio))
+                        feat_dim = history_feat.shape[1]
+                        device = history_feat.device
+                        dtype = history_feat.dtype
+                        # Generate ghost features in the same space (perturbed noise)
+                        ghost_feat = torch.randn(N_ghost, feat_dim, device=device, dtype=dtype) * 0.5
+                        # Run through reliability MLP
+                        q_ghost = self.prism_modules['reliability'](ghost_feat)
+                        # Ghost support scores = 0 (no match in current frame)
+                        ghost_support = torch.zeros(N_ghost, device=device, dtype=dtype)
+                        # Concatenate for loss: real first, ghost after
+                        q_loss = torch.cat([q, q_ghost], dim=0)
+                        support_scores = torch.cat([support_scores, ghost_support], dim=0)
+                    else:
+                        q_loss = q
+
+                    # Store for loss computation (may include ghost entries)
                     self._current_support_scores = support_scores
-                    self._current_q = q
+                    self._current_q = q_loss
                 else:
                     self._current_support_scores = None
                     self._current_q = None
@@ -456,6 +651,14 @@ class PRISMPillarsRF(Detector3DTemplate):
             total_loss = total_loss + self.lambda_rel * loss_rel
             tb_dict.update({f'rel_{k}': v for k, v in rel_loss_dict.items()})
 
+            # --- Reliability diagnostic monitoring (collapse detection) ---
+            q_detached = self._current_q.detach()
+            tb_dict['diag_q_mean'] = q_detached.mean().item()
+            tb_dict['diag_q_std'] = q_detached.std().item()
+            tb_dict['diag_q_frac_low'] = (q_detached < 0.1).float().mean().item()
+            tb_dict['diag_q_frac_high'] = (q_detached > 0.9).float().mean().item()
+            tb_dict['diag_support_mean'] = self._current_support_scores.detach().mean().item()
+
             # Clear stored tensors to free memory
             self._current_q = None
             self._current_support_scores = None
@@ -467,6 +670,14 @@ class PRISMPillarsRF(Detector3DTemplate):
             loss_sigma = self._uncertainty_reg(s_r, s_t)
             total_loss = total_loss + self.lambda_sigma * loss_sigma
             tb_dict['loss_sigma'] = loss_sigma.item()
+            # Sigma diagnostic monitoring (boundary hit detection)
+            s_r_d = s_r.detach()
+            s_t_d = s_t.detach()
+            tb_dict['diag_sigma_r_mean'] = s_r_d.mean().item()
+            tb_dict['diag_sigma_t_mean'] = s_t_d.mean().item()
+            tb_dict['diag_sigma_r_max_hit'] = (s_r_d > 0.55).float().mean().item()
+            tb_dict['diag_sigma_t_max_hit'] = (s_t_d > 1.90).float().mean().item()
+            tb_dict['diag_sigma_constraint_viol'] = (s_r_d > s_t_d + 0.01).float().mean().item()
 
         # ================================================================
         # 4. Cross-augmentation consistency (Paper Section 12)

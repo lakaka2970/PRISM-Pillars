@@ -27,6 +27,17 @@ def _step_scheduler(scheduler, cur_iter):
         scheduler.step(cur_iter)
 
 
+def _maybe_scale_phased_gradients(model):
+    """Apply P4 per-group LR multipliers via gradient scaling.
+
+    Handles DistributedDataParallel wrapper (model.module).
+    Converged_paper_plan.md §6.4.
+    """
+    m = model.module if hasattr(model, 'module') else model
+    if hasattr(m, 'scale_phased_gradients'):
+        m.scale_phased_gradients()
+
+
 def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
                     rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False,
                     use_wandb=False, scaler=None):
@@ -68,12 +79,16 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
                 loss, tb_dict, disp_dict = model_func(model, batch)
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
+            # P4 grouped learning rates: scale gradients before clipping
+            _maybe_scale_phased_gradients(model)
             clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
             scaler.step(optimizer)
             scaler.update()
         else:
             loss, tb_dict, disp_dict = model_func(model, batch)
             loss.backward()
+            # P4 grouped learning rates: scale gradients before clipping
+            _maybe_scale_phased_gradients(model)
             clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
             optimizer.step()
 

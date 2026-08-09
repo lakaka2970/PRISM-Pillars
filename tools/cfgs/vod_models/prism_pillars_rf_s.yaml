@@ -95,6 +95,8 @@ MODEL:
         NEG_THRESHOLD: 0.20
         RANK_MARGIN: 0.20
         MIN_ROUTING_Q: 0.05
+        GHOST_AUG_PROB: 0.3          # Probability of ghost augmentation per batch
+        GHOST_RATIO: 0.05            # Ghost points as fraction of real history points
 
     # --- DAUT: Doppler-Aware Uncertainty Tube (Paper Section 6) ---
     DOPPLER_TUBE:
@@ -212,12 +214,14 @@ OPTIMIZATION:
     AMP:
         ENABLED: true
 
-    # --- Phased Training Protocol (final_upgrade.md §12) ---
+    # --- Phased Training Protocol (converged_paper_plan.md §6.3-6.4) ---
     PHASED_TRAINING:
         ENABLED: true
-        PHASE0_EPOCHS: 5           # q=1, LAMBDA_REL=0, sigma fixed
-        PHASE1_EPOCHS: [6, 15]     # gradual LAMBDA_REL warm-up 0→0.20
-        PHASE2_START_EPOCH: 16     # learned sigma enabled, full modules
+        PHASE0_EPOCHS: 5             # q=1, LAMBDA_REL=0, sigma fixed
+        PHASE1_EPOCHS: [6, 15]       # gradual LAMBDA_REL warm-up 0→0.20
+        PHASE2_START_EPOCH: 16       # learned sigma enabled
+        PHASE2B_START_EPOCH: 21      # unfreeze all, P4 differential LRs
+        P4_GROUPED_LR: true          # backbone 0.2×, reliability 0.5×, sigma_mlp 1.0×, temporal 0.5×, head 1.0×
 
     # --- Early stopping / periodic evaluation ---
     EVAL_INTERVAL: 10               # Evaluate every N epochs during training
