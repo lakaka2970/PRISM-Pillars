@@ -13,3 +13,8 @@ pcdet.egg-info/
 .venv/
 data/VoD/
 wandb/
+
+# 训练报告（频繁变动，不入库）
+docs/Train_reports/
+# 参考文献 PDF（二进制，通过 Zotero/其他方式管理）
+docs/RadarPillar/
