@@ -218,3 +218,15 @@ OPTIMIZATION:
         PHASE0_EPOCHS: 5           # q=1, LAMBDA_REL=0, sigma fixed
         PHASE1_EPOCHS: [6, 15]     # gradual LAMBDA_REL warm-up 0→0.20
         PHASE2_START_EPOCH: 16     # learned sigma enabled, full modules
+
+    # --- Early stopping / periodic evaluation ---
+    EVAL_INTERVAL: 10               # Evaluate every N epochs during training
+    EARLY_STOP:
+        ENABLED: true
+        METRICS: ['Car_3d/moderate_R40', 'Pedestrian_3d/moderate_R40', 'Cyclist_3d/moderate_R40']
+        METRIC_REDUCER: mean
+        MODE: max
+        MIN_DELTA: 0.1
+        PATIENCE: 999              # effectively disabled — just for periodic eval
+        START_EPOCH: 10
+        SAVE_BEST: true
