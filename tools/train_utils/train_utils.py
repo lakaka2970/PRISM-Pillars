@@ -32,10 +32,14 @@ def _maybe_scale_phased_gradients(model):
 
     Handles DistributedDataParallel wrapper (model.module).
     Converged_paper_plan.md §6.4.
+
+    Returns:
+        dict: Per-group gradient diagnostics for TensorBoard (empty if not applicable).
     """
     m = model.module if hasattr(model, 'module') else model
     if hasattr(m, 'scale_phased_gradients'):
-        m.scale_phased_gradients()
+        return m.scale_phased_gradients()
+    return {}
 
 
 def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
@@ -80,7 +84,8 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             # P4 grouped learning rates: scale gradients before clipping
-            _maybe_scale_phased_gradients(model)
+            grad_diag = _maybe_scale_phased_gradients(model)
+            tb_dict.update({f'p4_{k}': v for k, v in grad_diag.items()})
             clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
             scaler.step(optimizer)
             scaler.update()
@@ -88,7 +93,8 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
             loss, tb_dict, disp_dict = model_func(model, batch)
             loss.backward()
             # P4 grouped learning rates: scale gradients before clipping
-            _maybe_scale_phased_gradients(model)
+            grad_diag = _maybe_scale_phased_gradients(model)
+            tb_dict.update({f'p4_{k}': v for k, v in grad_diag.items()})
             clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
             optimizer.step()
 

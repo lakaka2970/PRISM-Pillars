@@ -255,7 +255,7 @@ class PRISMPillarsRF(Detector3DTemplate):
                         for p in module.parameters():
                             p.requires_grad = True
                 self._phased_lr_multipliers = {
-                    'backbone': 0.2,
+                    'backbone': 0.5,       # was 0.2 (too conservative per r1 analysis)
                     'reliability': 0.5,
                     'sigma_mlp': 1.0,
                     'temporal': 0.5,
@@ -343,19 +343,39 @@ class PRISMPillarsRF(Detector3DTemplate):
         Called after scaler.unscale_() and before clip_grad_norm_().
 
         When all multipliers are 1.0, this is a no-op.
+
+        Returns:
+            dict: Per-group diagnostics {group}_grad_norm, {group}_lr_mult
+                  for TensorBoard monitoring.
         """
+        diag = {}
         if not self._phased_lr_multipliers:
-            return
+            return diag
         all_one = all(v == 1.0 for v in self._phased_lr_multipliers.values())
         if all_one:
-            return
+            # Still compute gradient norms for monitoring even when no scaling
+            for group_name, params in self._phased_param_groups.items():
+                total_norm = 0.0
+                for p in params:
+                    if p.grad is not None:
+                        total_norm += p.grad.data.norm(2).item() ** 2
+                diag[f'grad_norm_{group_name}'] = total_norm ** 0.5
+                diag[f'lr_mult_{group_name}'] = self._phased_lr_multipliers.get(group_name, 1.0)
+            return diag
         for group_name, params in self._phased_param_groups.items():
             mult = self._phased_lr_multipliers.get(group_name, 1.0)
-            if mult == 1.0:
-                continue
+            grad_norm_before = 0.0
             for p in params:
                 if p.grad is not None:
-                    p.grad.data.mul_(mult)
+                    grad_norm_before += p.grad.data.norm(2).item() ** 2
+            grad_norm_before = grad_norm_before ** 0.5
+            if mult != 1.0:
+                for p in params:
+                    if p.grad is not None:
+                        p.grad.data.mul_(mult)
+            diag[f'grad_norm_{group_name}'] = grad_norm_before
+            diag[f'lr_mult_{group_name}'] = mult
+        return diag
 
     def build_neck(self, model_info_dict):
         """Build Lite-MDFEN neck (between backbone_2d and dense_head)."""
@@ -486,8 +506,17 @@ class PRISMPillarsRF(Detector3DTemplate):
                         # Concatenate for loss: real first, ghost after
                         q_loss = torch.cat([q, q_ghost], dim=0)
                         support_scores = torch.cat([support_scores, ghost_support], dim=0)
+                        # Store ghost diagnostics for monitoring
+                        self._ghost_active = True
+                        self._ghost_q_mean = q_ghost.detach().mean().item()
+                        self._ghost_n = N_ghost
+                        self._q_real_mean = q.detach().mean().item()
                     else:
                         q_loss = q
+                        self._ghost_active = False
+                        self._ghost_q_mean = 0.0
+                        self._ghost_n = 0
+                        self._q_real_mean = q.detach().mean().item() if q.numel() > 0 else 0.0
 
                     # Store for loss computation (may include ghost entries)
                     self._current_support_scores = support_scores
@@ -636,6 +665,7 @@ class PRISMPillarsRF(Detector3DTemplate):
         loss_det, tb_dict_det = self.dense_head.get_loss()
         total_loss = total_loss + loss_det
         tb_dict.update({f'det_{k}': v for k, v in tb_dict_det.items()})
+        tb_dict['loss_det'] = loss_det.item()
 
         # ================================================================
         # 2. Reliability loss (Paper Section 5.3)
@@ -650,6 +680,8 @@ class PRISMPillarsRF(Detector3DTemplate):
             )
             total_loss = total_loss + self.lambda_rel * loss_rel
             tb_dict.update({f'rel_{k}': v for k, v in rel_loss_dict.items()})
+            tb_dict['loss_rel'] = loss_rel.item()
+            tb_dict['lambda_rel'] = self.lambda_rel
 
             # --- Reliability diagnostic monitoring (collapse detection) ---
             q_detached = self._current_q.detach()
@@ -659,9 +691,21 @@ class PRISMPillarsRF(Detector3DTemplate):
             tb_dict['diag_q_frac_high'] = (q_detached > 0.9).float().mean().item()
             tb_dict['diag_support_mean'] = self._current_support_scores.detach().mean().item()
 
+            # --- Ghost augmentation diagnostics ---
+            ghost_active = getattr(self, '_ghost_active', False)
+            tb_dict['diag_ghost_active'] = 1.0 if ghost_active else 0.0
+            if ghost_active:
+                tb_dict['diag_ghost_q_mean'] = getattr(self, '_ghost_q_mean', 0.0)
+                tb_dict['diag_ghost_n'] = float(getattr(self, '_ghost_n', 0))
+            tb_dict['diag_q_real_mean'] = getattr(self, '_q_real_mean', q_detached.mean().item())
+
             # Clear stored tensors to free memory
             self._current_q = None
             self._current_support_scores = None
+            self._ghost_active = False
+            self._ghost_q_mean = 0.0
+            self._ghost_n = 0
+            self._q_real_mean = 0.0
 
         # ================================================================
         # 3. Uncertainty regularization (Paper Section 12)
@@ -691,6 +735,33 @@ class PRISMPillarsRF(Detector3DTemplate):
                 tb_dict['loss_inv'] = loss_inv.item()
 
         tb_dict['loss_total'] = total_loss.item()
+
+        # ================================================================
+        # 5. Weight norm monitoring (throttled every 10 calls)
+        # ================================================================
+        if not hasattr(self, '_diag_call_count'):
+            self._diag_call_count = 0
+        self._diag_call_count += 1
+        if self._diag_call_count % 10 == 0:
+            # Backbone (backbone_2d) last conv weight norm
+            if hasattr(self, 'backbone_2d') and hasattr(self.backbone_2d, 'blocks'):
+                try:
+                    last_block = self.backbone_2d.blocks[-1]
+                    if hasattr(last_block, 'weight'):
+                        w = last_block.weight
+                        tb_dict['diag_weight_norm_backbone'] = w.data.norm().item()
+                    elif hasattr(last_block, 'conv'):
+                        w = last_block.conv.weight
+                        tb_dict['diag_weight_norm_backbone'] = w.data.norm().item()
+                except Exception:
+                    pass
+            # Detection head cls branch last conv weight norm
+            if hasattr(self, 'dense_head') and hasattr(self.dense_head, 'conv_cls'):
+                try:
+                    w = self.dense_head.conv_cls.weight
+                    tb_dict['diag_weight_norm_head'] = w.data.norm().item()
+                except Exception:
+                    pass
 
         return total_loss, tb_dict, disp_dict
 

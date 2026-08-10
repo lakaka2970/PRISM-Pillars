@@ -205,7 +205,7 @@ OPTIMIZATION:
     MOMS: [0.95, 0.85]
     PCT_START: 0.4
     DIV_FACTOR: 10
-    DECAY_STEP_LIST: [35, 45]
+    DECAY_STEP_LIST: [50, 65]
     LR_DECAY: 0.1
     LR_CLIP: 0.0000001
     GRAD_NORM_CLIP: 10
@@ -217,8 +217,8 @@ OPTIMIZATION:
     # --- Phased Training Protocol (converged_paper_plan.md §6.3-6.4) ---
     PHASED_TRAINING:
         ENABLED: true
-        PHASE0_EPOCHS: 5             # q=1, LAMBDA_REL=0, sigma fixed
-        PHASE1_EPOCHS: [6, 15]       # gradual LAMBDA_REL warm-up 0→0.20
+        PHASE0_EPOCHS: 3             # q=1, LAMBDA_REL=0, sigma fixed (shortened from 5)
+        PHASE1_EPOCHS: [4, 15]       # gradual LAMBDA_REL warm-up 0→0.20 (starts earlier)
         PHASE2_START_EPOCH: 16       # learned sigma enabled
         PHASE2B_START_EPOCH: 21      # unfreeze all, P4 differential LRs
         P4_GROUPED_LR: true          # backbone 0.2×, reliability 0.5×, sigma_mlp 1.0×, temporal 0.5×, head 1.0×
