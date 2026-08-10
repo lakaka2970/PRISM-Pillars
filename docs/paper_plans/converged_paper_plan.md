@@ -52,6 +52,7 @@
 | 最强差异化 | Doppler 可观性 → 各向异性概率证据 → 检测路由的完整因果链，领域内检测方向暂无先例 |
 | 实证现状 | r0 完整训练（四 PRISM 模块联合）VoD 3D mAP **53.29（std）/ 52.21（R40）**，大幅超出预测上界 51.0；但**公平对照与消融隔离尚未完成**（见 §7.3） |
 | 生死线 | P1 单调链实验（naive < ego < 确定性 < 各向同性 < 各向异性）**尚未执行**，是创新一成立的核心证据，必须补齐 |
+| 跨域机会 | **跨域相对 Drop 缩小**比单域 mAP 更容易过显著性检验，是物理正确性的间接证明；完整方案见**附录 A**（TJ4DRadSet 必做 + K-Radar 可选 + 私有数据协议） |
 
 ---
 
@@ -522,6 +523,8 @@ Adam + OneCycle（lr_peak=0.003，PCT_START=0.4，DIV_FACTOR=10，weight_decay=0
 
 > 4D imaging radar provides robust range, elevation and Doppler measurements for autonomous driving, but its point clouds remain extremely sparse and noisy. Multi-frame accumulation increases point density, yet existing approaches generally treat motion-compensated historical returns as deterministic and equally reliable points. This assumption is problematic because Doppler only constrains radial motion, while tangential motion, multipath reflections and compensation errors introduce substantial spatial uncertainty. We present PRISM-Pillars-RF, a lightweight radar-only detector that models historical returns as reliability-weighted anisotropic probabilistic evidence. A Doppler-aware anisotropic uncertainty tube constructs probabilistic historical evidence, a self-supervised temporal reliability estimator suppresses unsupported returns, and a causal local pillar fusion module lets current pillars selectively retrieve historical evidence according to feature similarity, motion uncertainty, reliability, evidence mass and temporal distance. To retain practical efficiency, the fused representation is refined by a re-parameterizable BEV backbone and a single-deformable raw-bypass neck. Experiments on [datasets] demonstrate that PRISM-Pillars-RF improves multi-frame detection and robustness while retaining the computational efficiency of pillar-based radar detectors.
 
+**摘要随叙事主线调整**（对应 §8.9 决策树）：若最终走鲁棒性叙事，把末句改为强调跨域证据，例如 "...improves multi-frame detection and, importantly, reduces cross-domain performance degradation under unseen radars and adverse weather..."，并补一句跨域 Drop 缩小的定量结论；数字一律待实验完成后填入。
+
 ### 8.3 Introduction 六段逻辑
 
 1. 4D 雷达优势（全天候、Doppler、低成本）与稀疏问题；
@@ -530,6 +533,8 @@ Adam + OneCycle（lr_peak=0.003，PCT_START=0.4，DIV_FACTOR=10，weight_decay=0
 4. 现有确定性补偿的问题（Doppler 只约束径向；SGE-Flow/HyperDet 均为确定性路线）；
 5. 本文洞察：*Historical returns are uncertain temporal evidence rather than deterministic geometric points.* + Correct-then-Refine 方法论；
 6. 三个贡献（严格对应 §2.1，不引入无关模块）。
+
+**鲁棒性叙事增强（可选第 7 段）**：若按 §8.9 走跨域/鲁棒性主线，在第 4 段后补一段"第四痛点"——即使单域补偿正确，**跨传感器/跨天气的域偏移仍使历史证据的可靠性分布漂移**，确定性融合会把域偏移放大为结构错误；由此引出"物理可观性建模天然利于跨域泛化"的论点，并在贡献表述中把跨域 Drop 缩小列为实验贡献。
 
 ### 8.4 Related Work 五小节 + 竞品定位
 
@@ -573,17 +578,17 @@ Adam + OneCycle（lr_peak=0.003，PCT_START=0.4，DIV_FACTOR=10，weight_decay=0
 4.4 Temporal evidence analysis（Table 2 = P1 判决链 + learned Σ + full）
 4.5 Reliability and uncertainty analysis（Table 5 + q/σ 可视化）
 4.6 Backbone and neck analysis（Table 3/4）
-4.7 Robustness experiments（扰动梯度曲线）
-4.8 Cross-sensor transfer（TJ4DRadSet；协议无法统一时不得称 domain generalization）
+4.7 Robustness experiments（扰动梯度曲线；与 4.8 互为印证：受控域偏移 vs 真实域偏移）
+4.8 Cross-sensor transfer and cross-domain Drop（TJ4DRadSet 必做 + K-Radar 天气可选；实验矩阵 CS-1~CS-7 / W-1~W-5、指标与红线见**附录 A.4**；协议无法统一时不得称 domain generalization）
 4.9 Efficiency and deployment（分模块延迟、部署态等价性、参数量/GFLOPs；DCNv3 需自定义 ONNX/TRT 算子时不得仅凭 PyTorch FPS 宣称边缘部署）
 4.10 Qualitative results and failure cases（必须包含失败案例：整体一致平移的错误补偿等 STER 无法识别的情形）
 ```
 
 ### 8.7 图表清单
 
-主文 8 图：① 总体架构（Correct→Fuse→Refine）；② Doppler 各向异性 Tube（径向窄/切向宽 vs 确定性点）；③ 概率 Pillar 路由（一点向多 Pillar 分配概率质量）；④ 因果局部检索融合；⑤ 历史帧数–mAP/延迟曲线；⑥ q 与 σ 可视化（高 q 在真实目标、低 q 在拖影/ghost）；⑦ naive / deterministic / PRISM 定性对比；⑧ 扰动鲁棒性曲线。补充材料：超参曲线、距离区间、延迟细分、更多失败案例。
+主文 9 图：① 总体架构（Correct→Fuse→Refine）；② Doppler 各向异性 Tube（径向窄/切向宽 vs 确定性点）；③ 概率 Pillar 路由（一点向多 Pillar 分配概率质量）；④ 因果局部检索融合；⑤ 历史帧数–mAP/延迟曲线；⑥ q 与 σ 可视化（高 q 在真实目标、低 q 在拖影/ghost）；⑦ naive / deterministic / PRISM 定性对比；⑧ 扰动鲁棒性曲线；⑨ **跨域 Drop 对比柱状图**（基线 vs PRISM，按跨传感器/天气场景分组，见附录 A.4.6）。补充材料：超参曲线、距离区间、延迟细分、Drop–距离曲线、更多失败案例。
 
-表格 Table 1–6 的详细设计见收敛方案二 §4。
+表格 Table 1–6 的详细设计见收敛方案二 §4；跨域 Drop 结果表（Table 6 及天气鲁棒性表）设计见附录 A.4.6。
 
 ### 8.8 审稿风险与应对（必须落入论文）
 
@@ -599,10 +604,21 @@ Adam + OneCycle（lr_peak=0.003，PCT_START=0.4，DIV_FACTOR=10，weight_decay=0
 
 ### 8.9 投稿定位
 
-- 创新程度自评：领域内**中上（约前 30–40%）**；达到 IROS / ITSC / IEEE RA-L / T-IV 及 SCI Q1–Q2 门槛；不够 CVPR/NeurIPS 的"新洞察"标准。
-- 首选 **T-IV / RA-L / IROS**；跨域 Drop 结果强则冲 **TITS**。
-- 领域门槛认知：VoD 头部已饱和（44.9→54.6），单模块增益普遍收缩到 +0.5~+2；2026 审稿人默认要求 mean±std 与 bootstrap；三类被认可的创新——表示替换、物理信息利用、训练范式——本文属"物理信息利用"。
-- 真正机会：**跨域相对 Drop 缩小**（VoD→TJ4DRadSet、恶劣天气）比单域 mAP 更容易过显著性检验；叙事建议以时序鲁棒性与跨可靠性为主结果、单域 mAP 为辅。
+**创新程度自评**：领域内**中上（约前 30–40%）**；达到 IROS / ITSC / IEEE RA-L / T-IV 及 SCI Q1–Q2 门槛；不够 CVPR/NeurIPS 的"新洞察"标准。领域门槛认知：VoD 头部已饱和（44.9→54.6），单模块增益普遍收缩到 +0.5~+2；2026 审稿人默认要求 mean±std 与 bootstrap；三类被认可的创新——表示替换、物理信息利用、训练范式——本文属"物理信息利用"。
+
+**条件投稿决策树**（在 Cycle 1/2 结果出来后择路，避免提前锁死叙事）：
+
+| 实验结果组合 | 叙事主线 | 目标会议/期刊 |
+|---|---|---|
+| 单域 ΔmAP ≥ 1.0 且过显著性，跨域 Drop 亦缩小 | 时序概率证据融合（单域+跨域双证据） | **T-IV / RA-L**（首选）；若跨域证据完整（TJ4D+K-Radar）冲 **TITS** |
+| 单域增益 <1.0 或不过显著性，但跨域 ΔDrop 显著 | **转向鲁棒性叙事**：以时序鲁棒性 + 跨域可靠性为主结果，单域 mAP 为辅 | T-IV（鲁棒性导向）/ RA-L / IROS；标题避免 "Detection" 刷点暗示，突出 Reliable/Robust |
+| 单域与跨域均不过显著性 | 触发方案重估：检查 P1 判决链与模块退出标准（收敛方案二 §3/§10） | 暂缓投稿；必要时降级为 ITSC/IROS 短文（效率+消融导向） |
+| 跨域 Drop 缩小 + 私有受控数据归因证据（附录 A.8 路径 B） | 鲁棒性 + 独有受控域偏移归因 | 差异化最强，优先冲 **TITS / T-IV** |
+
+**两条不变的原则**：
+
+1. 无论择路，P1 判决链与三 seed 显著性都是前置条件——没有它们，任何叙事都不成立；
+2. 跨域叙事一旦作为主线，TJ4DRadSet（必做）与鲁棒性扰动实验（§6）必须先于投稿完成；K-Radar 与私有数据是加分项而非门槛。完整实验设计见**附录 A**。
 
 ### 8.10 数字汇报红线
 
@@ -611,8 +627,237 @@ Adam + OneCycle（lr_peak=0.003，PCT_START=0.4，DIV_FACTOR=10，weight_decay=0
 3. test 集（若获得）仅最终评估一次；
 4. 引用他人数字标注 reported / reproduced；MAFF-Net 标注蒸馏非公平；
 5. 4090/5090 数值与 A4000 不可直接对比，效率以相对延迟或注明硬件；
-6. 消融每项 ≥2 run。
+6. 消融每项 ≥2 run；
+7. **跨域数字**：相对 Drop 汇报时必须同时给源域 AP 与目标域 AP 原值，禁止只报百分比；私有数据集须声明 proprietary 并给出统计特征（见附录 A.8）。
 
 ---
 
-*维护说明：本文档随实验推进更新；r0 之后的每次重要训练结果应回填 §7 并复核 §7.2 的可靠性分级。*
+## 附录 A：跨域 Drop 与跨数据集实验全案
+
+> **附录定位**：§8.9 判断"真正机会是跨域相对 Drop 缩小"，但截至 r0 该方向**尚未启动**（TJ4DRadSet 适配代码不存在、K-Radar 未开始）。本附录把该判断落成可执行方案：度量定义与意义、机制分析、实验设计、数据集选型、TJ4DRadSet 适配清单、K-Radar 提取规则、私有/自采数据协议模板。对应收敛方案二 §7、Cycle 3 任务 3.3 / 3.6。
+
+### A.1 含义与度量定义
+
+**跨域 Drop（Cross-domain Drop / 相对性能下降）**：在**源域**（训练数据集/环境）上训练的模型，直接迁移到**目标域**（不同数据集/传感器/天气/场景）后的相对性能损失。
+
+$$
+\text{Drop}=\frac{AP_{\text{source}}-AP_{\text{target}}}{AP_{\text{source}}}
+$$
+
+- $AP_{\text{source}}$：模型在自身训练集对应测试集上的精度；
+- $AP_{\text{target}}$：**同一模型、不再训练**，直接迁到目标域的精度（zero-shot transfer）；
+- **Drop 越小，泛化/鲁棒性越好**。
+
+三条理解要点：
+
+1. **不看目标域绝对 mAP**——不同数据集难度、标注协议、类别集合不同，绝对值无法公平比较；相对 Drop 用模型自己做归一化，绕开了"目标域天生更难"的陷阱。
+2. **必须是 zero-shot 迁移**——一旦在目标域上微调，Drop 衡量的是"适应能力"而非"泛化能力"，二者要在论文里分开表述（微调可作补充实验，见 A.4.1 的 CS-7）。
+3. **Drop 缩小 ≠ 目标域 SOTA**——论文主张是"相对基线，PRISM 的跨域退化更小"，不是"在目标域刷到第一"。
+
+### A.2 为什么是"真正机会"（意义）
+
+1. **更容易过显著性检验**：VoD 单域已饱和（44.9→54.6），单模块增益收缩到 +0.5~+2，而 seed 间 σ≈1 mAP，+1 以下难过 bootstrap；相对 Drop 衡量"抗退化能力"，受 seed 方差影响更小、效应量更易做出（assessment §0、§5.3）。
+2. **是 PRISM 物理正确性的间接证明**：DAUT 建模的是 Doppler 可观性这一**跨雷达共性**而非数据集统计捷径，STER 在目标域噪声更多时作用更大——跨域 Drop 缩小反过来支撑"抓住了物理本质"的主张，使创新一、二超越刷点工具。
+3. **真实部署刚需**：跨地区/跨天气/跨雷达型号运行是自动驾驶常态，单数据集高分模型无部署价值。
+4. **Q1 期刊隐性门槛**：T-IV/RA-L 尤其看重多数据集与鲁棒性（assessment §2.2）。
+
+**量化预期**（assessment §5.3，仅作规划目标，不得提前写入摘要）：
+
+| 跨域场景 | 预期相对 Drop 缩小 |
+|---|---|
+| VoD → TJ4DRadSet | 10–25% |
+| K-Radar 恶劣天气 | 15–30% |
+
+### A.3 域偏移来源与 PRISM 作用机制
+
+| 域偏移来源 | 具体表现 | PRISM 的对应机制 |
+|---|---|---|
+| 传感器差异 | 雷达型号、天线数、点云生成算法、点密度、RCS 标定 | DAUT 依赖物理可观性而非特定密度分布；RAPR 证据质量门自适应低密度 |
+| 场景差异 | 城市/高速、道路结构、目标尺寸分布 | CRLF 门控在证据不足时退化单帧，避免场景误配 |
+| 天气 | 雨/雾/雪引入杂波、ghost、衰减 | STER 抑制无支持回波；RADAR_AUG 显式模拟 |
+| 统计差异 | 点密度/RCS/Doppler 噪声分布 | RADAR_AUG + 一致性损失 $L_{inv}$ 学习不变表征 |
+
+**叙事逻辑**：跨域实验不只是"多测一个数据集"，而是回答"PRISM 的建模是否物理泛化"。因此论文应把**跨域 Drop 缩小**与**鲁棒性扰动实验（§6）**互相印证：前者是真实域偏移，后者是受控域偏移，两条证据链共同支撑可靠性主张。
+
+### A.4 跨域 Drop 实验设计方案
+
+#### A.4.1 核心实验矩阵（跨传感器，VoD ↔ TJ4DRadSet）
+
+| ID | Train | Test | 模型 | 作用 |
+|----|-------|------|------|------|
+| CS-1 | VoD | VoD | RadarPillars-5f | 源域基线 |
+| CS-2 | VoD | VoD | PRISM-S | 源域方法 |
+| CS-3 | VoD | TJ4D | RadarPillars-5f | 基线跨传感器 Drop |
+| CS-4 | VoD | TJ4D | PRISM-S | **方法跨传感器 Drop（核心主张）** |
+| CS-5 | TJ4D | TJ4D | RadarPillars-5f | 目标域自训练对照（证明目标域可学） |
+| CS-6 | TJ4D | TJ4D | PRISM-S | 方法在目标域有效性（非 VoD 过拟合） |
+| CS-7（可选） | VoD→TJ4D 微调 | TJ4D | PRISM-S | 微调上界，与 zero-shot 分开表述 |
+
+**核心论断**：$\Delta\text{Drop}=\text{Drop}_{\text{CS-3}}-\text{Drop}_{\text{CS-4}}>0$，即 PRISM 的跨域退化显著小于基线。CS-5/CS-6 用于排除"目标域本身太难"的混淆。
+
+#### A.4.2 天气矩阵（K-Radar，若启用）
+
+| ID | Train | Test | 说明 |
+|----|-------|------|------|
+| W-1 | normal | normal | 天气内对照 |
+| W-2/3/4 | normal | rain / fog / snow | 单天气迁移 |
+| W-5 | all-weather | adverse-weather | 全天气→恶劣天气 |
+
+每个 W 单元同时跑 RadarPillars 与 PRISM-S，比较 Drop。
+
+#### A.4.3 指标体系
+
+| 指标 | 定义 | 用途 |
+|---|---|---|
+| Relative Drop（主） | $(AP_s-AP_t)/AP_s$ | 主汇报 |
+| Absolute Drop | $AP_s-AP_t$ | 辅助 |
+| **ΔDrop**（核心） | $\text{Drop}_{base}-\text{Drop}_{PRISM}$ | 论文主张量 |
+| 分类别 Drop | 按 Car/Ped/Cyc 分别计算 | 分析哪类受益 |
+| 分距离 Drop | 近/中/远分段 | 远距通常 Drop 更大，PRISM 应更明显 |
+
+#### A.4.4 协议对齐规则（红线）
+
+1. **只在交集类别**评估（Car/Ped/Cyc 共同部分）；
+2. IoU 阈值、BEV 范围、最大距离尽量统一；无法统一时**分别报告两数据集各自官方协议**，禁止混算；
+3. 归一化参数只用训练集统计；
+4. 不得在目标域上调参/选 checkpoint；
+5. 若协议无法严格统一，全文称 **cross-sensor transfer study**，**禁用 domain generalization** 措辞。
+
+#### A.4.5 统计检验
+
+- 每个矩阵单元 ≥3 seed（42/666/2023）；
+- 目标域逐帧 AP → 1000 次 bootstrap → Drop 的 95% CI；
+- 对 $\Delta\text{Drop}$ 做配对检验（基线 vs PRISM 同 seed 配对），$p<0.05$ 判定显著；
+- 与主实验一致：mean±std，禁止挑最优 ckpt。
+
+#### A.4.6 产出物
+
+| 产出 | 载体 |
+|---|---|
+| TJ4DRadSet 跨传感器结果 | Table 6（收敛方案二 §4） |
+| K-Radar 天气鲁棒性 | Table 7 / 鲁棒性表 |
+| 跨域 Drop 对比柱状图（基线 vs PRISM，按场景） | Figure（见 §8.7 图⑨） |
+| Drop–距离曲线 | Figure / 补充材料 |
+
+### A.5 数据集选型与推荐
+
+| 数据集 | 规模 | 天气 | 数据形式 | 与 PRISM 适配 | 推荐 |
+|---|---|---|---|---|---|
+| **View-of-Delft (VoD)** | 8682 帧 | 良好 | 点云 | 已用，主开发集 | —（已选） |
+| **TJ4DRadSet** | 7757 帧 / 44 序列 | 良好 | 点云 + **track ID** | 首选第二数据集；track ID 可做时序稳定性 | ⭐⭐⭐⭐⭐ **必做** |
+| **K-Radar** | ~35k 帧 | **7 种天气** | **4D radar tensor** | 天气鲁棒性关键；需自建 tensor→点管线 | ⭐⭐⭐⭐ 强烈推荐（可选） |
+| MAN TruckScenes | 中 | 良好 | 6 雷达 360° | 多雷达/重卡，处理复杂 | ⭐⭐ 后续工作 |
+| Astyx HiRes2019 | 小 | 良好 | 点云 | 仅单帧，不适合时序 | ⭐ 不用于跨域 |
+| RadarScenes | 大 | — | 经典雷达（非 4D 成像） | 与 4D pillar 路线不符 | ⭐ 不适用 |
+
+**分层结论**：维持收敛方案二 §7 的"TJ4DRadSet 必做 + K-Radar 可选"。
+- **TJ4DRadSet**：点云格式、有 track ID、规模适中、适配成本最低，且可复现性好——优先做；
+- **K-Radar**：独一无二的天气维度，是鲁棒性叙事最有力证据，但 tensor 预处理工程负担重——建议 TJ4D 跑通且投稿目标为 T-IV/TITS 时再上；
+- **自采/私有数据**：见 A.8，定位为差异化加分项而非主实验集。
+
+### A.6 TJ4DRadSet 适配方案
+
+> 目标：把 TJ4DRadSet 接入 OpenPCDet 数据管线，产出与 VoD 一致的 `infos + gt_database`，支撑 CS-3~CS-7。以下为实施清单；具体坐标约定/类别表/扫描频率以 TJ4DRadSet 官方文档为准，落地前逐项核验。
+
+**① 目录与文件**
+
+```text
+pcdet/datasets/tj4dradset/
+├── __init__.py
+├── tj4dradset_dataset.py      # OpenPCDet Dataset 子类
+├── tj4dradset_utils.py        # 读取/坐标变换/类别映射
+└── sequence_loader 集成        # 复用 VoD 时序加载逻辑（真实 Δt、ego 对齐）
+
+tools/cfgs/dataset_configs/tj4dradset_dataset_radar.yaml
+tools/cfgs/tj4d_models/prism_pillars_rf.yaml
+```
+
+**② 坐标系统一**：把 TJ4D 原始坐标系变换到项目统一系（前 x、左 y、上 z）。先核对官方坐标约定，再写刚体变换（旋转 + 可能的轴交换），并用可视化 + `tests` 断言验证。
+
+**③ 类别映射表**（只在交集类别评估）：
+
+```text
+TJ4DRadSet 原始类别 → 统一类别
+  Car / Vehicle      → Car
+  Pedestrian         → Pedestrian
+  Cyclist            → Cyclist
+  其余（如 Tricycle 等）→ 评估时剔除，映射表存档
+```
+
+**④ 真实 Δt 与序列**：按 TJ4D 扫描频率把帧号换算为秒级 Δt；沿用 sequence 级划分，禁止随机按帧划分；track ID 建立连续帧索引（仅用于时序稳定性实验，主实验用原始标签）。
+
+**⑤ 点云范围 / 体素**：TJ4D 检测范围与 VoD 不同，`POINT_CLOUD_RANGE`、`VOXEL_SIZE` 按 TJ4D 官方范围重设，不照搬 VoD 的 `[0,-25.6,-3,51.2,25.6,2]`。
+
+**⑥ info 与 gt-database**：生成 `tj4dradset_infos_{train,val,test}.pkl` + `tj4dradset_dbinfos_train.pkl`；主实验同样**禁用 gt_sampling**（时序公平）。
+
+**⑦ 验收 checklist**：
+
+- [ ] 坐标系变换后点云与标注框可视化对齐；
+- [ ] train/val 序列不重叠（因果、无泄漏）；
+- [ ] Δt 符号通过 `tests/test_time_sign.py` 同类断言；
+- [ ] 1 epoch 冒烟训练 → 评估 → AP 输出全链路通过；
+- [ ] 类别映射表与剔除规则写入配置并存档。
+
+### A.7 K-Radar tensor→点固定提取规则设计
+
+K-Radar 主数据为 **4D radar tensor**（range × azimuth × elevation × Doppler 张量），与点云型 RadarPillar 不同，必须先固定"tensor→点"提取规则，且**该规则一经确定不得按天气调整**，否则污染 domain shift 实验。
+
+**提取管线（固定一次，全天气共用）**：
+
+```text
+4D radar tensor
+   │  (1) 固定 CFAR / 峰值检测（阈值一次设定）
+   ▼
+候选检测点 (range, azimuth, elevation, Doppler, power)
+   │  (2) 固定功率/信噪比下限（全天气同一阈值）
+   ▼
+球坐标 → 车体直角坐标 (x, y, z)
+   │  (3) 统一点格式 [x,y,z,log_rcs,v_rel,v_comp,delta_t,range,sin_az,cos_az,...]
+   ▼
+统一点云（接入 PRISM 数据管线）
+```
+
+**规则红线**：
+
+1. CFAR 阈值、功率下限、最大距离、角度范围**只在一套固定参数下运行**，禁止按天气/序列单独调；
+2. 优先复用 K-Radar 官方已提供的点云表示（若可用），避免自研提取引入不可比因素；自研则须把提取代码随论文开源；
+3. 保留 power、Doppler、range、azimuth、elevation 原始量，供后续复算；
+4. 天气划分按 K-Radar 官方 sequence 标签，禁止同一录制序列跨 train/test；
+5. 提取后抽样可视化核对（雨/雾/雪下点云形态合理，无明显伪点堆积）。
+
+### A.8 私有/自采数据集实验协议模板
+
+自采/私有数据可成为论文独特卖点（受控域偏移、别人没有的数据），但须遵守与公开数据相同的协议。三条现实路径：
+
+| 路径 | 适用 | 价值 | 风险 |
+|---|---|---|---|
+| **A 自采**（实验室/合作车装 4D 雷达） | 有车有设备 | 可主动设计受控域偏移（同雷达跨场景 / 同场景跨雷达），归因最干净 | 标注贵、周期长、≥1000 帧才有统计意义 |
+| **B 私有合作数据**（车企/雷达厂商） | 有合作关系 | 常能获得不同型号雷达同场景数据，天然构成跨传感器对，性价比最高 | 不可公开，需 proprietary 声明 + 统计特征背书 |
+| **C 仿真合成**（CARLA 等） | 无硬件 | 成本最低 | 4D 雷达仿真保真度不足，仅作 RADAR_AUG 延伸验证，不作主跨域证据 |
+
+**协议模板（落地时逐项填写，与 A.4.4 红线一致）**：
+
+```text
+[数据集名称 / 代号]：__________________________
+[来源路径]：A 自采 / B 私有合作 / C 仿真
+[雷达型号与参数]：__________________________
+[帧数 / 序列数]：________ / ________
+[场景与天气]：__________________________
+[坐标系约定 → 统一系变换]：__________________________
+[标注方式与类别映射]：__________________________
+[真实 Δt 来源（时间戳/频率）]：__________________________
+[train/val/test 序列级划分]：__________________________
+[归一化参数（仅训练集统计）]：__________________________
+[是否公开 / proprietary 声明]：__________________________
+[域偏移实验角色]：受控跨传感器 / 受控跨场景 / 天气 / 其他
+```
+
+**论文表述要求**：
+
+- 私有数据写明 "proprietary dataset, details cannot be released"，并给出统计特征（点密度、RCS 分布、目标类别占比）让审稿人信服；
+- 私有/自采结果**必须与至少一个公开数据集结果并存**，保证可复现背书；
+- 若自采数据构成"受控域偏移"（同雷达跨场景或同场景跨雷达），应明确这是公开数据集无法提供的归因证据，作为差异化亮点突出。
+
+---
+
+*维护说明：本文档随实验推进更新；r0 之后的每次重要训练结果应回填 §7 并复核 §7.2 的可靠性分级。附录 A 随 TJ4DRadSet/K-Radar 适配推进更新，A.6/A.7 的 checklist 完成后在对应项打勾并记录实测协议参数。*
